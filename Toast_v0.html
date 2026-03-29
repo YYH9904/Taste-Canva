@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>Sensory Canva: Debug Mode</title>
+    <style>body { margin: 0; overflow: hidden; background: #111; color: white; font-family: sans-serif; }</style>
+</head>
+<body>
+    <div id="container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script id="vertexShader" type="x-shader/x-vertex">
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+
+    <script id="fragmentShader" type="x-shader/x-fragment">
+        uniform float u_time;
+        uniform vec3 u_colorBase;
+        uniform vec3 u_colorHighlight;
+        uniform float u_noiseScale;
+        varying vec2 vUv;
+
+        float random (vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); }
+        float noise (in vec2 st) {
+            vec2 i = floor(st); vec2 f = fract(st);
+            float a = random(i); float b = random(i + vec2(1.0, 0.0));
+            float c = random(i + vec2(0.0, 1.0)); float d = random(i + vec2(1.0, 1.0));
+            vec2 u = f*f*(3.0-2.0*f);
+            return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+        }
+
+        void main() {
+            vec2 uv = vUv;
+            float cycle = mod(u_time * 0.15, 1.0); 
+            
+            float n = noise(uv * u_noiseScale + u_time * 0.1);
+            vec3 materialColor = mix(u_colorBase, u_colorHighlight, n);
+            
+            float mask = noise(uv * 5.0 - u_time * 0.2);
+            float isSolid = step(cycle, mask); 
+            
+            // 灰燼運算：加入 mod 避免 u_time 過大導致浮點數溢位
+            vec3 ashColor = vec3(0.15, 0.12, 0.1) * random(uv * 100.0 + mod(u_time, 100.0));
+            float ashAlpha = 0.25 * noise(uv * 20.0);
+            
+            vec3 finalColor = mix(ashColor, materialColor, isSolid);
+            float finalAlpha = mix(ashAlpha, 1.0, isSolid);
+
+            float edge = smoothstep(cycle - 0.05, cycle + 0.05, mask) - smoothstep(cycle + 0.05, cycle + 0.15, mask);
+            finalColor += u_colorHighlight * edge * 1.5;
+
+            gl_FragColor = vec4(finalColor, finalAlpha);
+        }
+    </script>
+
+    <script>
+        console.log("【系統狀態】開始載入 Sensory Canva...");
+
+        const products = [
+            { name: '小麥胚芽生吐司 (塊狀/顆粒)', base: new THREE.Color(0xf5ebd9), high: new THREE.Color(0xdfbf73), scale: 15.0 },
+            { name: 'Fami!ce 霜淇淋 (流體/漸層)', base: new THREE.Color(0x2288ff), high: new THREE.Color(0x99ccff), scale: 2.0 },
+            { name: '聯名便當 (濃烈/破碎)', base: new THREE.Color(0x331100), high: new THREE.Color(0xff4400), scale: 30.0 }
+        ];
+
+        let scene, camera, renderer, uniforms, material;
+        let currentIdx = 0;
+
+        function init() {
+            try {
+                scene = new THREE.Scene();
+                
+                // 【關鍵修正】：擴展裁切面 (0.1 到 10)
+                camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+                // 【關鍵修正】：將攝影機往 Z 軸後退，確保畫布位於視野內
+                camera.position.z = 1; 
+
+                renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                document.getElementById('container').appendChild(renderer.domElement);
+
+                uniforms = {
+                    u_time: { value: 0.0 },
+                    u_colorBase: { value: products[0].base },
+                    u_colorHighlight: { value: products[0].high },
+                    u_noiseScale: { value: products[0].scale }
+                };
+
+                material = new THREE.ShaderMaterial({
+                    uniforms: uniforms,
+                    vertexShader: document.getElementById('vertexShader').textContent,
+                    fragmentShader: document.getElementById('fragmentShader').textContent,
+                    transparent: true
+                });
+
+                const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+                scene.add(mesh);
+
+                window.addEventListener('resize', () => {
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                }, false);
+
+                setInterval(() => {
+                    currentIdx = (currentIdx + 1) % products.length;
+                    const p = products[currentIdx];
+                    uniforms.u_colorBase.value = p.base;
+                    uniforms.u_colorHighlight.value = p.high;
+                    uniforms.u_noiseScale.value = p.scale;
+                    uniforms.u_time.value = 0.0;
+                    console.log("【事件觸發】畫布切換至：", p.name);
+                }, 6000);
+
+                console.log("【系統狀態】WebGL 初始化成功，開始渲染畫布。");
+
+            } catch (error) {
+                console.error("【系統狀態】致命錯誤，無法初始化 WebGL：", error);
+                document.body.innerHTML = "<h2 style='padding: 20px;'>系統無法啟動，請開啟 Chrome 開發者工具 (F12) 檢查 Console 錯誤訊息。</h2>";
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            uniforms.u_time.value += 0.02;
+            renderer.render(scene, camera);
+        }
+
+        init();
+        animate();
+    </script>
+</body>
+</html>

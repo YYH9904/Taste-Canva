@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>Sensory Canva: True Organic Lifecycle</title>
+    <style>body { margin: 0; overflow: hidden; background: #080808; }</style>
+</head>
+<body>
+    <div id="container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script id="vertexShader" type="x-shader/x-vertex">
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+
+    <script id="fragmentShader" type="x-shader/x-fragment">
+        uniform float u_time;
+        uniform float u_seed; // 【關鍵修復】：接收來自 JS 的絕對亂數
+        varying vec2 vUv;
+
+        vec3 colorBase = vec3(0.97, 0.94, 0.88); 
+        vec3 colorHighlight = vec3(0.90, 0.78, 0.48); 
+        vec3 colorDissipateMisty = vec3(0.35, 0.30, 0.20); 
+
+        float random (vec2 st) { 
+            return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); 
+        }
+
+        vec2 random2( vec2 p ) {
+            return fract(sin(vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3))))*43758.5453);
+        }
+
+        float noise(in vec2 st) {
+            vec2 i = floor(st); vec2 f = fract(st);
+            vec2 u = f*f*(3.0-2.0*f);
+            return mix( mix( dot( random2(i + vec2(0.0,0.0)), f - vec2(0.0,0.0) ), 
+                             dot( random2(i + vec2(1.0,0.0)), f - vec2(1.0,0.0) ), u.x),
+                        mix( dot( random2(i + vec2(0.0,1.0)), f - vec2(0.0,1.0) ), 
+                             dot( random2(i + vec2(1.0,1.0)), f - vec2(1.0,1.0) ), u.x), u.y);
+        }
+
+        float fbm(in vec2 st) {
+            float value = 0.0; float amplitude = 0.5;
+            for (int i = 0; i < 4; i++) {
+                value += amplitude * noise(st); st *= 2.0; amplitude *= 0.5;
+            }
+            return value;
+        }
+
+        float voronoi(in vec2 st) {
+            vec2 i = floor(st); vec2 f = fract(st); float m_dist = 1.0;
+            for (int y= -1; y<=1; y++) {
+                for (int x= -1; x<=1; x++) {
+                    vec2 neighbor = vec2(float(x),float(y));
+                    vec2 point = random2(i + neighbor);
+                    vec2 timeDisturbance = vec2(sin(u_time * 0.15 + point.x * 6.28), cos(u_time * 0.1 - point.y * 6.28)) * 0.1;
+                    float dist = distance(f, neighbor + point + timeDisturbance);
+                    m_dist = min(m_dist, dist);
+                }
+            }
+            return m_dist;
+        }
+
+        void main() {
+            vec2 uv = vUv;
+            // 【關鍵修復】：將亂數種子注入空間座標，徹底洗牌每一次的圖形
+            vec2 seedUv = uv + vec2(u_seed * 13.0, u_seed * 7.0); 
+            
+            // 將時間鎖定在真實的 30 秒區間 (0.0 到 1.0)
+            float globalT = clamp(u_time / 30.0, 0.0, 1.0); 
+
+            // --- 1. 時間相對論 (局部衰老速率) ---
+            // 讓不同區域有著完全不同的生長與崩解速度
+            float speedMap = fbm(seedUv * 5.0);
+            float localDecayRate = mix(0.5, 3.0, speedMap); // 速率從 0.5倍 到 3倍 劇烈拉扯
+            float localT = pow(globalT, localDecayRate); // 每個像素自己的時間軸
+
+            // --- 2. 有機生長顯影 (前 3 秒) ---
+            float spawnTime = clamp(u_time / 3.0, 0.0, 1.0);
+            float spawnMap = fbm(seedUv * 4.0); // 生長點的分佈
+            float spawnMask = smoothstep(spawnMap - 0.2, spawnMap + 0.2, spawnTime);
+
+            // --- 3. 空間扭曲與大面積孔隙 ---
+            vec2 warp = vec2(fbm(seedUv * 3.0 + u_time * 0.05), fbm(seedUv * 3.0 - u_time * 0.05)) * 0.15;
+            vec2 warpedUv = seedUv + warp;
+
+            // 維持較大的 scale: 8.0，確保大色塊
+            float basePorosity = voronoi(warpedUv * 8.0);
+            float fractalPorosity = fbm(warpedUv * 20.0);
+            float finalPorosity = pow(mix(basePorosity, fractalPorosity, 0.45), 1.8); 
+
+            // 色彩疊加
+            float bakeMask = smoothstep(0.0, 0.9, fbm(warpedUv * 2.0));
+            vec3 materialColor = mix(colorBase, colorHighlight, bakeMask);
+            float grainNoise = random(seedUv * 180.0) * 0.12;
+            materialColor -= vec3(grainNoise); 
+            materialColor *= mix(vec3(0.9), vec3(0.5), smoothstep(0.0, 0.5, finalPorosity));
+
+            // --- 4. 非均勻耗散演算法 ---
+            float globalEntropy = fbm(seedUv * 7.0);
+            float structureStrength = finalPorosity * 0.55 + globalEntropy * 0.45;
+            
+            // 使用局部時間 (localT) 進行坍塌判定，創造參差不齊的消滅感
+            float collapseMask = smoothstep(localT - 0.2, localT + 0.1, structureStrength);
+
+            // 散逸霧氣
+            vec3 ashColor = colorDissipateMisty * random(seedUv * 100.0 + mod(u_time, 100.0));
+            float ashAlpha = 0.3 * voronoi(seedUv * 20.0);
+            
+            vec3 finalColor = mix(ashColor, materialColor, collapseMask);
+            
+            // 【關鍵】：將「消滅」與「生長」的遮罩相乘，確保從無到有，再從有到無
+            float finalAlpha = mix(ashAlpha, 1.0, collapseMask) * spawnMask;
+
+            // 崩解邊緣光暈
+            float edge = smoothstep(localT - 0.05, localT + 0.05, structureStrength) - smoothstep(localT + 0.05, localT + 0.15, structureStrength);
+            finalColor += colorHighlight * edge * 1.0;
+
+            gl_FragColor = vec4(finalColor, finalAlpha);
+        }
+    </script>
+
+    <script>
+        let scene, camera, renderer, uniforms, material;
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+            camera.position.z = 1; 
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            // 【關鍵修復】：抓取真實時間，並生成隨機種子
+            uniforms = {
+                u_time: { value: 0.0 },
+                u_seed: { value: Math.random() * 100.0 }
+            };
+
+            material = new THREE.ShaderMaterial({
+                uniforms: uniforms,
+                vertexShader: document.getElementById('vertexShader').textContent,
+                fragmentShader: document.getElementById('fragmentShader').textContent,
+                transparent: true
+            });
+
+            const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+            scene.add(mesh);
+
+            window.addEventListener('resize', () => {
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            }, false);
+
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            // 抓取網頁載入後的「真實秒數」，精準控制 30 秒的物理推演
+            uniforms.u_time.value = performance.now() / 1000.0; 
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>

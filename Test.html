@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>Sensory Canva: Modular System</title>
+    <style>body { margin: 0; overflow: hidden; background: #0a0a0a; }</style>
+</head>
+<body>
+    <div id="container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script id="vertexShader" type="x-shader/x-vertex">
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+
+    <script>
+        const products = [
+            { name: '小麥胚芽生吐司 (塊狀/顆粒)', base: new THREE.Color(0xf5ebd9), high: new THREE.Color(0xdfbf73), scale: 15.0 },
+            { name: 'Fami!ce 霜淇淋 (流體/漸層)', base: new THREE.Color(0x2288ff), high: new THREE.Color(0x99ccff), scale: 2.0 },
+            { name: '聯名便當 (濃烈/破碎)', base: new THREE.Color(0x331100), high: new THREE.Color(0xff4400), scale: 30.0 }
+        ];
+
+        let scene, camera, renderer, uniforms, material;
+        let currentIdx = 0;
+
+        // 使用 async function 來確保非同步讀取 Shader 檔案完成後再啟動系統
+        async function init() {
+            try {
+                // 1. 讀取外部的 GLSL 檔案
+                console.log("正在讀取外部 Shader 檔案...");
+                const response = await fetch('./Toast_v0.frag');
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const fragmentShaderCode = await response.text();
+                console.log("Shader 檔案讀取成功。");
+
+                // 2. 初始化 Three.js 空間
+                scene = new THREE.Scene();
+                camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+                camera.position.z = 1; 
+
+                renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                document.getElementById('container').appendChild(renderer.domElement);
+
+                uniforms = {
+                    u_time: { value: 0.0 },
+                    u_colorBase: { value: products[0].base },
+                    u_colorHighlight: { value: products[0].high },
+                    u_noiseScale: { value: products[0].scale }
+                };
+
+                // 將讀取到的 fragmentShaderCode 注入
+                material = new THREE.ShaderMaterial({
+                    uniforms: uniforms,
+                    vertexShader: document.getElementById('vertexShader').textContent,
+                    fragmentShader: fragmentShaderCode,
+                    transparent: true
+                });
+
+                const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+                scene.add(mesh);
+
+                window.addEventListener('resize', () => {
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                }, false);
+
+                // 3. 啟動商品輪播排程
+                setInterval(() => {
+                    currentIdx = (currentIdx + 1) % products.length;
+                    const p = products[currentIdx];
+                    uniforms.u_colorBase.value = p.base;
+                    uniforms.u_colorHighlight.value = p.high;
+                    uniforms.u_noiseScale.value = p.scale;
+                    uniforms.u_time.value = 0.0;
+                }, 6000);
+
+                // 4. 開始渲染迴圈
+                animate();
+
+            } catch (error) {
+                console.error("系統啟動失敗：", error);
+                document.body.innerHTML = `<h2 style='color:white; padding: 20px;'>啟動失敗：${error.message} <br> 請確認是否使用 Live Server 開啟。</h2>`;
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            uniforms.u_time.value += 0.02;
+            renderer.render(scene, camera);
+        }
+
+        // 執行主程式
+        init();
+    </script>
+</body>
+</html>
