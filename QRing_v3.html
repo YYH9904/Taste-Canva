@@ -7,7 +7,7 @@
 <style>
 html,body{
   margin:0;height:100%;overflow:hidden;
-  background:radial-gradient(circle at 35% 18%, #fffafc 0%, #ffe7ef 36%, #ffd0dd 68%, #f6b6c9 100%);
+  background:radial-gradient(circle at 35% 18%, #fffafb 0%, #ffdce8 34%, #ffbfd3 66%, #f79fba 100%);
 }
 canvas{display:block}
 </style>
@@ -25,40 +25,87 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const cam = new THREE.OrthographicCamera();
 const VIEW_H = 8.8;
+
 function resize(){
-  const a = innerWidth/innerHeight;
-  cam.left = -VIEW_H*a*0.5; cam.right = VIEW_H*a*0.5;
-  cam.top = VIEW_H*0.5; cam.bottom = -VIEW_H*0.5;
-  cam.near = 0.1; cam.far = 30; cam.position.set(0,0,10);
+  const a = innerWidth / innerHeight;
+  cam.left = -VIEW_H * a * 0.5;
+  cam.right = VIEW_H * a * 0.5;
+  cam.top = VIEW_H * 0.5;
+  cam.bottom = -VIEW_H * 0.5;
+  cam.near = 0.1;
+  cam.far = 30;
+  cam.position.set(0,0,10);
   cam.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight);
 }
-resize(); addEventListener("resize", resize);
+resize();
+addEventListener("resize", resize);
 
-scene.add(new THREE.HemisphereLight(0xfffcfd,0xf2b5c8,1.48));
-const key = new THREE.DirectionalLight(0xffffff,1.22);
-key.position.set(2.5,3.8,6.2);
+scene.add(new THREE.HemisphereLight(0xfffcfd, 0xf3b1c7, 1.5));
+
+const key = new THREE.DirectionalLight(0xffffff, 1.28);
+key.position.set(2.5, 3.8, 6.2);
 scene.add(key);
 
-const fill = new THREE.PointLight(0xff8aa8,0.62,18);
-fill.position.set(-3,-1.8,4.5);
+const fill = new THREE.PointLight(0xff7fa3, 0.68, 18);
+fill.position.set(-3, -1.8, 4.5);
 scene.add(fill);
 
 const rand = (a,b=0)=>Math.random()*(a-b)+b;
 const clamp = THREE.MathUtils.clamp;
 const smooth = THREE.MathUtils.smoothstep;
-const geo = new THREE.SphereGeometry(1,36,36);
+const geo = new THREE.SphereGeometry(1, 40, 40);
 
-function bounds(){ return { w: cam.right*0.92, h: cam.top*0.84 }; }
+const berryChunkGeo = new THREE.PlaneGeometry(0.16, 0.09);
+
+function berryChunkMat(){
+  return new THREE.MeshBasicMaterial({
+    color: new THREE.Color().setRGB(
+      0.96 + Math.random()*0.04,
+      0.08 + Math.random()*0.05,
+      0.12 + Math.random()*0.05
+    ),
+    transparent: true,
+    opacity: 0.98,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  });
+}
+
+function attachSurfaceCrumbs(node, count = 5 + Math.floor(Math.random()*3)){
+  for(let i=0;i<count;i++){
+    const piece = new THREE.Mesh(berryChunkGeo, berryChunkMat());
+
+    // 直接限制在球的前半部，保證看得到
+    const x = rand(0.55, -0.55);
+    const y = rand(0.55, -0.55);
+    const z = 0.92 + rand(0.08, 0.0);
+
+    piece.position.set(x, y, z);
+
+    piece.rotation.z = rand(Math.PI*2, 0);
+    piece.rotation.x = rand(0.35, -0.35);
+    piece.rotation.y = rand(0.35, -0.35);
+
+    const s = 0.55 + Math.random()*0.45;
+    piece.scale.set(s, s * rand(1.35, 0.7), 1);
+
+    node.mesh.add(piece);
+  }
+}
+
+function bounds(){
+  return { w: cam.right * 0.92, h: cam.top * 0.84 };
+}
 
 function softMat(seed){
   const m = new THREE.MeshPhysicalMaterial({
-    color:new THREE.Color().setRGB(0.99,0.74+Math.random()*0.04,0.84+Math.random()*0.03),
-    roughness:0.28,
-    clearcoat:0.20,
-    clearcoatRoughness:0.30,
+    color:new THREE.Color().setRGB(1.00, 0.66 + Math.random()*0.05, 0.82 + Math.random()*0.04),
+    roughness:0.18,
+    clearcoat:0.28,
+    clearcoatRoughness:0.18,
     sheen:1.0,
-    sheenColor:new THREE.Color("#fff8f4"),
+    sheenColor:new THREE.Color("#fff7f3"),
     transparent:true
   });
 
@@ -72,33 +119,17 @@ function softMat(seed){
       .replace("#include <common>",`
         #include <common>
         uniform float uAlpha, uHit, uSeed;
-        float hash21(vec2 p){
-          p = fract(p * vec2(123.34,345.45));
-          p += dot(p,p+34.23);
-          return fract(p.x*p.y);
-        }
       `)
       .replace("#include <color_fragment>",`
         #include <color_fragment>
         vec3 n = normalize(vNormal);
 
-        float flakeBig   = smoothstep(0.88, 0.94, hash21(n.xy * 7.0  + uSeed * 0.7));
-        float flakeSmall = smoothstep(0.95, 0.985, hash21(n.yx * 18.0 + uSeed * 1.9));
-        float flakeMask  = max(flakeBig * 0.85, flakeSmall * 0.65);
+        float softFront = pow(max(dot(n,vec3(0.0,0.0,1.0)),0.0),0.48);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0,0.80,0.88), softFront * 0.42);
 
-        // 深紅草莓碎片
-        vec3 flakeColor = vec3(0.78, 0.08, 0.20);
+        float rim = pow(1.0 - max(dot(n,vec3(0.0,0.0,1.0)),0.0),2.6);
+        diffuseColor.rgb += vec3(1.0,0.52,0.74) * rim * 0.07;
 
-        // 讓碎片稍微有亮面，不要像髒點
-        float flakeShine = flakeMask * 0.18;
-        diffuseColor.rgb = mix(diffuseColor.rgb, flakeColor, flakeMask * 0.88);
-        diffuseColor.rgb += vec3(0.12, 0.02, 0.03) * flakeShine;
-
-        float softFront = pow(max(dot(n,vec3(0.0,0.0,1.0)),0.0),0.55);
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0,0.84,0.89), softFront*0.34);
-
-        float rim = pow(1.0 - max(dot(n,vec3(0.0,0.0,1.0)),0.0),2.8);
-        diffuseColor.rgb += vec3(1.0,0.63,0.76) * rim * 0.06;
         diffuseColor.rgb += vec3(1.0,0.55,0.65) * uHit * 0.04;
         diffuseColor.a *= uAlpha;
       `);
@@ -110,7 +141,8 @@ function makeNode(r){
   const mesh = new THREE.Mesh(geo, softMat(Math.random()*1000));
   mesh.visible = false;
   scene.add(mesh);
-  return {
+
+  const node = {
     mesh, r,
     pos:new THREE.Vector3(),
     vel:new THREE.Vector3(),
@@ -123,6 +155,11 @@ function makeNode(r){
     wobX:0,
     wobY:0
   };
+
+  // 每顆球掛上鮮紅草莓碎片
+  attachSurfaceCrumbs(node);
+
+  return node;
 }
 
 function ringSlots(center, radius, count=8){
@@ -141,31 +178,56 @@ function ringSlots(center, radius, count=8){
 
 const rings = [];
 const freeNodes = [];
+
+// 漂浮草莓碎片
 const crumbGroup = new THREE.Group();
 scene.add(crumbGroup);
 
-function addCrumbs(count=220){
+function addCrumbs(count=260){
   while(crumbGroup.children.length){
     const c = crumbGroup.children.pop();
     c.geometry?.dispose?.();
     c.material?.dispose?.();
   }
-  const g = new THREE.BufferGeometry();
-  const pos = new Float32Array(count * 3);
+
   for(let i=0;i<count;i++){
-    pos[i*3+0] = rand(cam.right*1.08, cam.left*1.08);
-    pos[i*3+1] = rand(cam.top*1.02, cam.bottom*1.02);
-    pos[i*3+2] = 0;
+    const w = 0.018 + Math.random()*0.065;
+    const h = 0.010 + Math.random()*0.030;
+    const g = new THREE.PlaneGeometry(w, h);
+
+    const m = new THREE.MeshBasicMaterial({
+      color: new THREE.Color().setRGB(
+        0.90 + Math.random()*0.10,
+        0.05 + Math.random()*0.08,
+        0.10 + Math.random()*0.08
+      ),
+      transparent: true,
+      opacity: 0.22 + Math.random()*0.55,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+
+    const piece = new THREE.Mesh(g, m);
+    piece.position.set(
+      rand(cam.right*1.08, cam.left*1.08),
+      rand(cam.top*1.02, cam.bottom*1.02),
+      rand(0.2, -0.2)
+    );
+    piece.rotation.z = rand(Math.PI*2, 0);
+
+    piece.userData = {
+      baseX: piece.position.x,
+      baseY: piece.position.y,
+      phase: Math.random()*10,
+      speed: 0.05 + Math.random()*0.18,
+      driftX: rand(0.03, -0.03),
+      driftY: rand(0.025, -0.025),
+      spin: rand(0.004, -0.004),
+      pulse: 0.85 + Math.random()*0.3
+    };
+
+    crumbGroup.add(piece);
   }
-  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  const m = new THREE.PointsMaterial({
-    ssize: 0.024,
-    color: 0xd63a5d,
-    opacity: 0.38,
-    transparent: true,
-    depthWrite: false
-  });
-  crumbGroup.add(new THREE.Points(g, m));
 }
 
 function clearAll(){
@@ -175,9 +237,23 @@ function clearAll(){
 }
 
 function spawnMainRing(x,y,delay=0){
-  const center = new THREE.Vector3(x,y,0);
+  let cx = x, cy = y, tries = 0;
+  while(tries < 20){
+    let ok = true;
+    for(const r of rings){
+        const dx = r.center.x - cx;
+        const dy = r.center.y - cy;
+        if(Math.hypot(dx, dy) < 2.6){ ok = false; break; }
+    }
+    if(ok) break;
+    cx += rand(1.0, -1.0);
+    cy += rand(0.8, -0.8);
+    tries++;
+  }
+  const center = new THREE.Vector3(cx,cy,0);
   const radius = 1.08;
   const slots = ringSlots(center, radius, 8);
+
   const nodes = slots.map((slot,i)=>{
     const n = makeNode((0.155 + Math.random()*0.012) * 1.9);
     n.kind = "main";
@@ -185,11 +261,13 @@ function spawnMainRing(x,y,delay=0){
     n.slotId = i;
     n.spawn = delay + i*0.55 + rand(3.2,0);
     n.target.copy(slot);
+
     const a = rand(Math.PI*2,0), d = rand(2.6,1.6);
     n.pos.set(center.x + Math.cos(a)*d, center.y + Math.sin(a)*d*0.72, 0);
     n.vel.set(rand(0.0015,-0.0015), rand(0.0015,-0.0015), 0);
     return n;
   });
+
   rings.push({
     type:"main",
     center, radius, nodes,
@@ -202,7 +280,19 @@ function spawnWanderRing(x,y,count=8){
   const center = new THREE.Vector3(x,y,0);
   const radius = 0.78 + Math.random()*0.12;
   const allSlots = ringSlots(center, radius, 8);
-  const pick = count===8 ? [...Array(8).keys()] : [...Array(8).keys()].sort(()=>Math.random()-0.5).slice(0,count);
+  let pick;
+  
+  if(count===8){
+    pick = [...Array(8).keys()];
+  }else if(count===3){
+    pick = [0, 3, 6];
+  }else if(count===2){
+    pick = [1, 5];
+  }else{
+    const candidates = [0,2,4,6,1,3,5,7];
+    pick = candidates.slice(0, count);
+  }
+
   const nodes = pick.map(i=>{
     const n = makeNode((0.145 + Math.random()*0.012) * 1.9);
     n.kind = "wander";
@@ -214,6 +304,7 @@ function spawnWanderRing(x,y,count=8){
     n.vel.set(rand(0.0008,-0.0008), rand(0.0008,-0.0008), 0);
     return n;
   });
+
   rings.push({
     type:"wander",
     center, radius, nodes,
@@ -223,11 +314,32 @@ function spawnWanderRing(x,y,count=8){
   });
 }
 
+function farEnoughFromOthers(x, y, minDist = 1.6){
+  const p = new THREE.Vector2(x, y);
+
+  for(const r of rings){
+    if(p.distanceTo(new THREE.Vector2(r.center.x, r.center.y)) < minDist) return false;
+  }
+
+  for(const n of freeNodes){
+    if(p.distanceTo(new THREE.Vector2(n.pos.x, n.pos.y)) < minDist) return false;
+  }
+
+  return true;
+}
+
 function spawnFree(x,y){
+  let px = x, py = y, tries = 0;
+  while(tries < 30 && !farEnoughFromOthers(px, py, 1.8)){
+    px = rand(6,-6);
+    py = rand(4,-4);
+    tries++;
+  }
+
   const n = makeNode((0.18 + Math.random()*0.04) * 1.75);
   n.kind = "free";
   n.spawn = rand(8,0);
-  n.pos.set(x,y,0);
+  n.pos.set(px,py,0);
   n.target.copy(n.pos);
   n.vel.set(rand(0.0007,-0.0007), rand(0.0007,-0.0007), 0);
   freeNodes.push(n);
@@ -235,19 +347,17 @@ function spawnFree(x,y){
 
 function initScene(){
   clearAll();
-  addCrumbs();
+  addCrumbs(220);
 
   spawnMainRing(-2.4,  0.9, 0);
   spawnMainRing( 2.2, -0.6, 5.0);
 
-  spawnWanderRing(-5.1,  2.3, 8);
-  spawnWanderRing( 5.0,  2.0, 5);
-  spawnWanderRing(-4.8, -2.2, 4);
-  spawnWanderRing( 4.9, -2.1, 8);
-  spawnWanderRing( 0.0,  3.1, 6);
-  spawnWanderRing( 0.2, -3.1, 5);
+  spawnWanderRing(-5.4,  2.5, 8);
+  spawnWanderRing( 5.4,  2.3, 8);
+  spawnWanderRing( 0.0,  3.4, 3);
+  spawnWanderRing( 0.0, -3.4, 3);
 
-  for(let i=0;i<16;i++) spawnFree(rand(6,-6), rand(4,-4));
+  for(let i=0;i<6;i++) spawnFree(rand(6,-6), rand(4,-4));
 }
 
 function reviveRing(r, t){
@@ -257,6 +367,7 @@ function reviveRing(r, t){
     wander: { x: rand(b.w*0.85,-b.w*0.85), y: rand(b.h*0.78,-b.h*0.78), radius:0.78+Math.random()*0.12 }
   };
   const p = presets[r.type];
+
   r.center.set(p.x,p.y,0);
   r.radius = p.radius;
   const slots = ringSlots(r.center, r.radius, 8);
@@ -264,12 +375,18 @@ function reviveRing(r, t){
   r.nodes.forEach((n,i)=>{
     n.ringId = rings.indexOf(r);
     n.slotId = i;
-    n.dead = n.dying = n.born = false;
+    n.dead = false;
+    n.dying = false;
+    n.born = false;
     n.mesh.visible = false;
     n.hit = 0;
+    n.wobX = 0;
+    n.wobY = 0;
     n.spawn = t + (r.type==="main" ? i*0.55 + rand(2.8,0) : rand(2.2,0));
+
     const slot = slots[i];
     n.target.copy(slot);
+
     if(r.type==="main"){
       const a = rand(Math.PI*2,0), d = rand(2.5,1.5);
       n.pos.set(r.center.x + Math.cos(a)*d, r.center.y + Math.sin(a)*d*0.72, 0);
@@ -298,23 +415,28 @@ function collide(nodes){
       if(!b.born || b.dead) continue;
 
       if(a.ringId >= 0 && a.ringId === b.ringId) continue;
+      if(a.kind==="free" && b.kind==="free") continue;
 
       const d = new THREE.Vector3().subVectors(b.pos,a.pos);
       let dist = d.length();
-      const min = a.r + b.r + 0.010;
+      const min = a.r + b.r + 0.14;
       if(dist >= min) continue;
 
-      if(dist < 0.0001){ d.set(1,0,0); dist = 0.0001; }
+      if(dist < 0.0001){
+        d.set(1,0,0);
+        dist = 0.0001;
+      }
       d.multiplyScalar(1/dist);
 
       const overlap = min - dist;
-      a.pos.addScaledVector(d,-overlap*0.52);
-      b.pos.addScaledVector(d, overlap*0.52);
+      a.pos.addScaledVector(d,-overlap*0.78);
+      b.pos.addScaledVector(d, overlap*0.78);
 
-      a.vel.addScaledVector(d,-0.0012-overlap*0.010);
-      b.vel.addScaledVector(d, 0.0012+overlap*0.010);
+      // 位移彈開小一點
+      a.vel.addScaledVector(d,-0.0022-overlap*0.020);
+      b.vel.addScaledVector(d, 0.0022+overlap*0.020);
 
-      // 不把球打遠，而是給它局部晃動能量
+      // 局部晃動能量
       a.hit = Math.min(1, a.hit + 0.95);
       b.hit = Math.min(1, b.hit + 0.95);
 
@@ -327,41 +449,61 @@ function collide(nodes){
 }
 
 function updateNode(n,t,dt){
-  if(t < n.spawn){ n.mesh.visible = false; return; }
-  if(!n.born){ n.born = true; n.mesh.visible = true; }
-
-  const bornT = smooth(t, n.spawn, n.spawn+1.6);
-
-  n.vel.x += Math.sin(t*0.18 + n.breathe) * 0.00006;
-  n.vel.y += Math.cos(t*0.16 + n.breathe*1.2) * 0.00006;
-
-  if(n.kind==="main" || n.kind==="wander"){
-    const to = new THREE.Vector3().subVectors(n.target,n.pos);
-    n.vel.addScaledVector(to, n.kind==="main" ? 0.00034 : 0.00028);
-  }else{
-    n.vel.x += Math.sin(t*0.08 + n.breathe) * 0.00003;
-    n.vel.y += Math.cos(t*0.07 + n.breathe) * 0.00003;
+  if(t < n.spawn){
+    n.mesh.visible = false;
+    return;
   }
 
-  n.vel.multiplyScalar(0.995);
-  n.pos.addScaledVector(n.vel, dt*60);
+  if(!n.born){
+    n.born = true;
+    n.mesh.visible = true;
+  }
 
-  const b = bounds();
-  if(n.pos.x < -b.w+n.r){ n.pos.x=-b.w+n.r; n.vel.x*=-0.55; n.hit=0.4; }
-  if(n.pos.x >  b.w-n.r){ n.pos.x= b.w-n.r; n.vel.x*=-0.55; n.hit=0.4; }
-  if(n.pos.y < -b.h+n.r){ n.pos.y=-b.h+n.r; n.vel.y*=-0.55; n.hit=0.4; }
-  if(n.pos.y >  b.h-n.r){ n.pos.y= b.h-n.r; n.vel.y*=-0.55; n.hit=0.4; }
+  const bornT = smooth(t, n.spawn, n.spawn + 1.6);
+
+  // 長出來之後，再用一小段時間慢慢解鎖移動
+  const moveT = smooth(t, n.spawn + 1.4, n.spawn + 4.2);
+
+  if(moveT > 0.0){
+    n.vel.x += Math.sin(t*0.18 + n.breathe) * 0.00003 * moveT;
+    n.vel.y += Math.cos(t*0.16 + n.breathe*1.2) * 0.00003 * moveT;
+
+    if(n.kind==="main" || n.kind==="wander"){
+        const to = new THREE.Vector3().subVectors(n.target,n.pos);
+        n.vel.addScaledVector(to, (n.kind==="main" ? 0.00007 : 0.00006) * moveT);
+    }else{
+        n.vel.x += Math.sin(t*0.08 + n.breathe) * 0.000015 * moveT;
+        n.vel.y += Math.cos(t*0.07 + n.breathe) * 0.000015 * moveT;
+    }
+
+    n.vel.multiplyScalar(0.992);
+    n.pos.addScaledVector(n.vel, dt*60);
+
+    const b = bounds();
+    if(n.pos.x < -b.w+n.r){ n.pos.x=-b.w+n.r; n.vel.x*=-0.55; n.hit=0.4; }
+    if(n.pos.x >  b.w-n.r){ n.pos.x= b.w-n.r; n.vel.x*=-0.55; n.hit=0.4; }
+    if(n.pos.y < -b.h+n.r){ n.pos.y=-b.h+n.r; n.vel.y*=-0.55; n.hit=0.4; }
+    if(n.pos.y >  b.h-n.r){ n.pos.y= b.h-n.r; n.vel.y*=-0.55; n.hit=0.4; }
+  }else{
+    // 長出來前幾乎不移動
+    n.vel.multiplyScalar(0.75);
+  }
 
   let alpha = bornT;
   let scaleCut = 1;
+
   if(n.dying){
     const k = clamp((t-n.dieAt)/1.4, 0, 1);
     scaleCut = 1 - smooth(k,0,1);
     alpha *= scaleCut;
-    if(k>=1){ n.dead = true; n.mesh.visible = false; return; }
+    if(k>=1){
+      n.dead = true;
+      n.mesh.visible = false;
+      return;
+    }
   }
 
-  const pulse = 1 + Math.sin(t*18 + n.breathe)*n.hit*0.08;
+  const pulse = 1 + Math.sin(t*18 + n.breathe) * n.hit * 0.08;
 
   n.wobX *= 0.88;
   n.wobY *= 0.88;
@@ -370,12 +512,12 @@ function updateNode(n,t,dt){
     Math.sin(t*22 + n.breathe) * n.wobX * n.r * 0.45,
     Math.cos(t*20 + n.breathe*1.3) * n.wobY * n.r * 0.45,
     0
-  );  
+  );
 
   n.hit *= 0.90;
 
   const breath = 1 + Math.sin(t*0.72 + n.breathe)*0.018;
-  const s = n.r * breath * pulse * scaleCut;
+  const s = n.r * breath * pulse * scaleCut * bornT;
 
   n.mesh.position.copy(n.pos).add(wobblePos);
   n.mesh.scale.set(
@@ -428,8 +570,13 @@ function updateRings(t){
 
   freeNodes.forEach(n=>{
     if(n.dead && t > n.spawn + 18 + rand(6,0)){
-      n.dead = n.dying = n.born = false;
+      n.dead = false;
+      n.dying = false;
+      n.born = false;
       n.mesh.visible = false;
+      n.hit = 0;
+      n.wobX = 0;
+      n.wobY = 0;
       n.spawn = t + rand(5,0);
       n.pos.set(rand(6,-6), rand(4,-4), 0);
       n.target.copy(n.pos);
@@ -453,7 +600,14 @@ function loop(now){
   const dt = Math.min(now - last, 0.033);
   last = now;
 
-  crumbGroup.rotation.z += 0.00015;
+  // 漂浮草莓碎片動畫
+  crumbGroup.children.forEach(c=>{
+    const u = c.userData;
+    c.position.x = u.baseX + Math.sin(t * u.speed + u.phase) * u.driftX;
+    c.position.y = u.baseY + Math.cos(t * (u.speed*0.85) + u.phase) * u.driftY;
+    c.rotation.z += u.spin;
+    c.material.opacity = (0.18 + 0.42 * (0.5 + 0.5 * Math.sin(t * u.speed * 1.4 + u.phase))) * u.pulse;
+  });
 
   updateRings(t);
 
