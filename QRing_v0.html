@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>Sensory Canva: Strawberry Q-Ring 8-Ball Matrix</title>
+    <style>body { margin: 0; overflow: hidden; background: #050505; }</style>
+</head>
+<body>
+    <div id="container"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script id="fragmentShader" type="x-shader/x-fragment">
+        precision highp float;
+        uniform float u_time;
+        uniform float u_seed; 
+        uniform float u_lifecycle; // 480s
+        varying vec2 vUv;
+
+        // 感官色票
+        vec3 colPink = vec3(1.0, 0.72, 0.77); 
+        vec3 colRed = vec3(0.88, 0.07, 0.37); 
+        vec3 colDark = vec3(0.3, 0.15, 0.18);
+
+        float rand(vec2 n) { return fract(sin(dot(n, vec2(12.9898, 4.1414))) * 43758.5453); }
+
+        // 元球能量場函數
+        float getBallEnergy(vec2 p, vec2 center, float radius) {
+            float d = distance(p, center);
+            return (radius * radius) / (d * d + 0.001);
+        }
+
+        void main() {
+            vec2 uv = vUv - 0.5; // 將座標中心化
+            uv.x *= 1.5; // 修正螢幕比例感
+
+            float totalEnergy = 0.0;
+            vec2 lightDir = normalize(vec3(0.5, 0.5, 1.0)).xy; // 虛擬光源位置：左上方
+
+            // --- 核心：8 顆球的環狀碰撞矩陣 ---
+            for (int i = 0; i < 8; i++) {
+                float idx = float(i);
+                float angle = idx * (6.2831 / 8.0);
+                
+                // 每顆球的異步生命
+                float bOffset = rand(vec2(idx, u_seed)) * (u_lifecycle * 0.25);
+                float growth = smoothstep(bOffset, bOffset + (u_lifecycle * 0.1), u_time);
+                float decay = smoothstep(u_lifecycle * 0.4, u_lifecycle, u_time);
+                float ballAlpha = growth * (1.0 - decay);
+
+                // 彈性碰撞位移：加入隨機震盪
+                float bounce = sin(u_time * 2.0 + idx) * 0.02;
+                vec2 center = vec2(cos(angle), sin(angle)) * (0.3 + bounce);
+                
+                // 累加元球能量
+                totalEnergy += getBallEnergy(uv, center, 0.08) * ballAlpha;
+            }
+
+            // --- 光影感渲染 (Pseudo-3D Shading) ---
+            // 透過能量場的梯度來模擬表面起伏
+            float h = totalEnergy;
+            float h_x = totalEnergy - (totalEnergy * 0.98); // 簡化的梯度模擬
+            float h_y = totalEnergy - (totalEnergy * 0.98);
+            
+            vec3 normal = normalize(vec3(h_x, h_y, 0.5)); // 算出表面法線
+            float diff = max(dot(normal.xy, lightDir), 0.0); // 蘭伯特光影
+            float spec = pow(diff, 10.0) * 0.5; // 增加糖霜的高光感
+
+            // 結構判定
+            float mask = smoothstep(0.8, 1.2, h); // 決定球體的邊界
+            
+            // 色彩合成
+            vec3 materialCol = mix(colDark, colPink, smoothstep(0.5, 1.5, h));
+            materialCol += colRed * (diff * 0.3); // 加入光影層次
+            materialCol += spec; // 加上糖霜高光
+
+            // 最終輸出
+            float finalAlpha = smoothstep(0.1, 0.5, h);
+            gl_FragColor = vec4(materialCol * finalAlpha, finalAlpha);
+        }
+    </script>
+
+    <script>
+        let scene, camera, renderer, uniforms, clock;
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+            camera.position.z = 1;
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('container').appendChild(renderer.domElement);
+            clock = new THREE.Clock();
+            uniforms = {
+                u_time: { value: 0.0 },
+                u_seed: { value: Math.random() * 500.0 },
+                u_lifecycle: { value: 15.0 } // 錄製影像用 15s，實際 480s
+            };
+            const material = new THREE.ShaderMaterial({
+                uniforms: uniforms,
+                vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                fragmentShader: document.getElementById('fragmentShader').textContent,
+                transparent: true
+            });
+            scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material));
+            animate();
+        }
+        function animate() {
+            requestAnimationFrame(animate);
+            uniforms.u_time.value = clock.getElapsedTime();
+            renderer.render(scene, camera);
+        }
+        init();
+    </script>
+</body>
+</html>

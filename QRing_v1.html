@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>Sensory Canva: 3D Strawberry Q-Ring Matrix</title>
+    <style>body { margin: 0; overflow: hidden; background: #050505; }</style>
+</head>
+<body>
+    <div id="container"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script id="fragmentShader" type="x-shader/x-fragment">
+        precision highp float;
+        uniform float u_time;
+        uniform float u_seed; 
+        uniform float u_lifecycle; // 480s
+        varying vec2 vUv;
+
+        // 感官色票轉譯
+        vec3 colPink = vec3(1.0, 0.75, 0.8); // 主體草莓粉
+        vec3 colRed = vec3(0.85, 0.05, 0.3); // 裝飾深紅果粒
+        vec3 colLight = vec3(1.0, 0.95, 0.9); // 高光
+
+        float rand(vec2 n) { return fract(sin(dot(n, vec2(12.9898, 4.1414))) * 43758.5453); }
+
+        // 元球能量場計算 (Metaball Potential)
+        float ballPotential(vec2 p, vec2 center, float radius) {
+            float d = length(p - center);
+            return (radius * radius) / (d * d + 0.0001);
+        }
+
+        // 計算能量場的梯度，用於生成 3D 法線 (Normal)
+        float getField(vec2 p) {
+            float field = 0.0;
+            // 模擬 12 顆具備異步生命的彈性球
+            for (int i = 0; i < 12; i++) {
+                float idx = float(i);
+                float birth = rand(vec2(idx, u_seed)) * (u_lifecycle * 0.3);
+                float lifeAlpha = smoothstep(birth, birth + (u_lifecycle * 0.1), u_time) * (1.0 - smoothstep(u_lifecycle * 0.4, u_lifecycle, u_time));
+                
+                // 隨機漂移與集群 (聚集成環的物理暗示)
+                float angle = u_time * 0.2 + idx * 0.8;
+                vec2 drift = vec2(cos(angle + sin(u_time*0.5)), sin(angle * 0.5)) * 0.25;
+                vec2 center = vec2(cos(idx * 0.52), sin(idx * 0.52)) * 0.2 + drift;
+                
+                field += ballPotential(p, center, 0.065) * lifeAlpha;
+            }
+            return field;
+        }
+
+        void main() {
+            vec2 uv = (vUv - 0.5) * vec2(1.8, 1.0); // 比例修正
+            
+            float h = getField(uv);
+            
+            // --- 3. 3D 光影渲染引擎 ---
+            // 數值閾值判定
+            if (h < 1.0) {
+                // 散逸霧氣態
+                float mist = fract(sin(dot(uv, vec2(12.98, 78.23))) * 43758.5453) * 0.05;
+                gl_FragColor = vec4(vec3(0.1), mist * smoothstep(0.0, 1.0, h));
+                return;
+            }
+
+            // 計算梯度 (Gradient) 作為 3D 法線
+            float e = 0.01;
+            vec2 nx = vec2(getField(uv + vec2(e, 0.0)) - getField(uv - vec2(e, 0.0)), 0.0);
+            vec2 ny = vec2(0.0, getField(uv + vec2(0.0, e)) - getField(uv - vec2(0.0, e)));
+            vec3 normal = normalize(vec3(nx.x, ny.y, 1.5)); // 1.5 決定球體的圓潤度/高度
+
+            // 光源定義
+            vec3 lightPos = normalize(vec3(0.5, 0.5, 1.0));
+            float diff = max(dot(normal, lightPos), 0.0); // 漫反射
+            float spec = pow(diff, 12.0) * 0.6; // 鏡面高光 (糖霜質感)
+            float rim = pow(1.0 - max(dot(normal, vec3(0,0,1)), 0.0), 3.0) * 0.4; // 邊緣光
+
+            // 草莓果粒對位 (根據 warped uv)
+            float bits = step(0.94, fract(sin(dot(normal.xy, vec2(12.98, 78.23))) * 43758.5453));
+            
+            // 最終色彩混合
+            vec3 materialCol = mix(colPink, colRed, bits * 0.5);
+            vec3 finalColor = materialCol * (diff + 0.2) + (colLight * spec) + (colPink * rim);
+
+            // 結構斷裂感 (隨消融時間增加紋理擾動)
+            float decayFlag = smoothstep(u_lifecycle * 0.5, u_lifecycle, u_time);
+            finalColor -= decayFlag * rand(uv * 10.0) * 0.2;
+
+            gl_FragColor = vec4(finalColor, 1.0);
+        }
+    </script>
+
+    <script>
+        let scene, camera, renderer, uniforms, clock;
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+            camera.position.z = 1;
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('container').appendChild(renderer.domElement);
+            clock = new THREE.Clock();
+            
+            uniforms = {
+                u_time: { value: 0.0 },
+                u_seed: { value: Math.random() * 888.0 },
+                u_lifecycle: { value: 15.0 } // Demo 用 15s，實際計畫為 480s
+            };
+            
+            const material = new THREE.ShaderMaterial({
+                uniforms: uniforms,
+                vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                fragmentShader: document.getElementById('fragmentShader').textContent,
+                transparent: true
+            });
+            
+            scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material));
+            animate();
+        }
+        function animate() {
+            requestAnimationFrame(animate);
+            uniforms.u_time.value = clock.getElapsedTime();
+            renderer.render(scene, camera);
+        }
+        init();
+    </script>
+</body>
+</html>
