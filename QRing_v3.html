@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Q 堤 perpetual gradient v4</title>
+<style>
+html,body{
+  margin:0;height:100%;overflow:hidden;
+  background:radial-gradient(circle at 35% 18%, #fff9fb 0%, #ffe8ee 38%, #ffd4df 68%, #f5b8c9 100%);
+}
+canvas{display:block}
+</style>
+</head>
+<body>
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+const renderer = new THREE.WebGLRenderer({antialias:true,alpha:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const cam = new THREE.OrthographicCamera();
+const VIEW_H = 8.8;
+function resize(){
+  const a = innerWidth/innerHeight;
+  cam.left = -VIEW_H*a*0.5; cam.right = VIEW_H*a*0.5;
+  cam.top = VIEW_H*0.5; cam.bottom = -VIEW_H*0.5;
+  cam.near = 0.1; cam.far = 30; cam.position.set(0,0,10);
+  cam.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+}
+resize(); addEventListener("resize", resize);
+
+scene.add(new THREE.HemisphereLight(0xfffcfd,0xefb7c7,1.45));
+const key = new THREE.DirectionalLight(0xffffff,1.15); key.position.set(2.5,3.8,6.2); scene.add(key);
+const fill = new THREE.PointLight(0xff8dab,0.55,18); fill.position.set(-3,-1.8,4.5); scene.add(fill);
+
+const rand = (a,b=0)=>Math.random()*(a-b)+b;
+const clamp = THREE.MathUtils.clamp;
+const smooth = THREE.MathUtils.smoothstep;
+const geo = new THREE.SphereGeometry(1,36,36);
+
+function bounds(){ return { w: cam.right*0.92, h: cam.top*0.84 }; }
+
+function softMat(seed){
+  const m = new THREE.MeshPhysicalMaterial({
+    color:new THREE.Color().setRGB(0.97,0.81+Math.random()*0.03,0.86+Math.random()*0.02),
+    roughness:0.60,
+    clearcoat:0.08,
+    clearcoatRoughness:0.75,
+    sheen:1.0,
+    sheenColor:new THREE.Color("#fff8f4"),
+    transparent:true
+  });
+  m.onBeforeCompile = s=>{
+    m.userData.shader = s;
+    s.uniforms.uAlpha = { value:1 };
+    s.uniforms.uHit   = { value:0 };
+    s.uniforms.uSeed  = { value:seed };
+    s.fragmentShader = s.fragmentShader
+      .replace("#include <common>",`
+        #include <common>
+        uniform float uAlpha, uHit, uSeed;
+        float hash21(vec2 p){
+          p = fract(p * vec2(123.34,345.45));
+          p += dot(p,p+34.23);
+          return fract(p.x*p.y);
+        }
+      `)
+      .replace("#include <color_fragment>",`
+        #include <color_fragment>
+        vec3 n = normalize(vNormal);
+        float flake = smoothstep(0.965,0.992,hash21(n.xy*12.0+uSeed));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86,0.24,0.36), flake*0.35);
+        float softFront = pow(max(dot(n,vec3(0.0,0.0,1.0)),0.0),0.6);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0,0.95,0.96), softFront*0.22);
+        float rim = pow(1.0 - max(dot(n,vec3(0.0,0.0,1.0)),0.0),2.5);
+        diffuseColor.rgb += vec3(1.0,0.76,0.83) * rim * 0.07;
+        diffuseColor.rgb += vec3(1.0,0.60,0.70) * uHit * 0.05;
+        diffuseColor.a *= uAlpha;
+      `);
+  };
+  return m;
+}
+
+function makeNode(r){
+  const mesh = new THREE.Mesh(geo, softMat(Math.random()*1000));
+  mesh.visible = false;
+  scene.add(mesh);
+  return {
+    mesh, r,
+    pos:new THREE.Vector3(),
+    vel:new THREE.Vector3(),
+    target:new THREE.Vector3(),
+    hit:0, born:false, dying:false, dead:false,
+    spawn:0, dieAt:0, breathe:Math.random()*10,
+    kind:"free",
+    ringId:-1,
+    slotId:-1
+  };
+}
+
+function ringSlots(center, radius, count=8){
+  const arr = [];
+  for(let i=0;i<count;i++){
+    const a = i/count*Math.PI*2 - Math.PI/2;
+
+    // 基本花圈
+    const x = Math.cos(a) * radius;
+    const y = Math.sin(a) * radius * 0.82;
+
+    // 每個鼓包再往外鼓一點，讓 slot 更像 Q 堤節點
+    const bulge = 0.16;
+    const bx = Math.cos(a) * bulge;
+    const by = Math.sin(a) * bulge * 0.82;
+
+    arr.push(new THREE.Vector3(
+      center.x + x + bx,
+      center.y + y + by,
+      0
+    ));
+  }
+  return arr;
+}
+
+const rings = [];
+const freeNodes = [];
+
+function clearAll(){
+  [...rings.flatMap(r=>r.nodes), ...freeNodes].forEach(n=>scene.remove(n.mesh));
+  rings.length = 0; freeNodes.length = 0;
+}
+
+function spawnMainRing(x,y,delay=0){
+  const center = new THREE.Vector3(x,y,0);
+  const radius = 1.18; // 拉大，不再擠成一坨
+  const slots = ringSlots(center, radius, 8);
+  const nodes = slots.map((slot,i)=>{
+    const n = makeNode(0.155 + Math.random()*0.012);
+    n.kind = "main";
+    n.ringId = rings.length;
+    n.slotId = i;
+    n.spawn = delay + i*0.55 + rand(3.2,0); // 更慢、更漸進
+    n.target.copy(slot);
+    const a = rand(Math.PI*2,0), d = rand(2.6,1.6);
+    n.pos.set(center.x + Math.cos(a)*d, center.y + Math.sin(a)*d*0.72, 0);
+    n.vel.set(rand(0.0015,-0.0015), rand(0.0015,-0.0015), 0);
+    return n;
+  });
+  rings.push({
+    type:"main",
+    center, radius, nodes,
+    eatClock: 18 + rand(5,0),
+    respawnAt: Infinity
+  });
+}
+
+function spawnWanderRing(x,y,count=8){
+  const center = new THREE.Vector3(x,y,0);
+  const radius = 0.88 + Math.random()*0.08;
+  const allSlots = ringSlots(center, radius, 8);
+  const pick = count===8 ? [...Array(8).keys()] : [...Array(8).keys()].sort(()=>Math.random()-0.5).slice(0,count);
+  const nodes = pick.map(i=>{
+    const n = makeNode(0.145 + Math.random()*0.012);
+    n.kind = "wander";
+    n.ringId = rings.length;
+    n.slotId = i;
+    n.spawn = rand(3,0);
+    n.target.copy(allSlots[i]);
+    n.pos.copy(allSlots[i]).add(new THREE.Vector3(rand(0.08,-0.08), rand(0.08,-0.08), 0));
+    n.vel.set(rand(0.0008,-0.0008), rand(0.0008,-0.0008), 0);
+    return n;
+  });
+  rings.push({
+    type:"wander",
+    center, radius, nodes,
+    drift:new THREE.Vector3(rand(0.00035,-0.00035), rand(0.00028,-0.00028), 0),
+    phase:Math.random()*10,
+    respawnAt: Infinity
+  });
+}
+
+function spawnFree(x,y){
+  const n = makeNode(0.18 + Math.random()*0.04);
+  n.kind = "free";
+  n.spawn = rand(8,0);
+  n.pos.set(x,y,0);
+  n.target.copy(n.pos);
+  n.vel.set(rand(0.0007,-0.0007), rand(0.0007,-0.0007), 0);
+  freeNodes.push(n);
+}
+
+function initScene(){
+  clearAll();
+  spawnMainRing(-2.4,  0.9, 0);
+  spawnMainRing( 2.2, -0.6, 5.0);
+
+  spawnWanderRing(-5.1,  2.3, 8);
+  spawnWanderRing( 5.0,  2.0, 5);
+  spawnWanderRing(-4.8, -2.2, 4);
+  spawnWanderRing( 4.9, -2.1, 8);
+  spawnWanderRing( 0.0,  3.1, 6);
+  spawnWanderRing( 0.2, -3.1, 5);
+
+  for(let i=0;i<16;i++) spawnFree(rand(6,-6), rand(4,-4));
+}
+
+function reviveRing(r, t){
+  const b = bounds();
+  const presets = {
+    main:   { x: rand(b.w*0.55,-b.w*0.55), y: rand(b.h*0.45,-b.h*0.45), radius:0.90 },
+    wander: { x: rand(b.w*0.85,-b.w*0.85), y: rand(b.h*0.78,-b.h*0.78), radius:0.62+Math.random()*0.10 }
+  };
+  const p = presets[r.type];
+  r.center.set(p.x,p.y,0);
+  r.radius = p.radius;
+  const slots = ringSlots(r.center, r.radius, 8);
+  const count = r.type==="main" ? 8 : r.nodes.length;
+
+  r.nodes.forEach((n,i)=>{
+    n.ringId = rings.indexOf(r);
+    n.slotId = i;
+    n.dead = n.dying = n.born = false;
+    n.mesh.visible = false;
+    n.hit = 0;
+    n.spawn = t + (r.type==="main" ? i*0.55 + rand(2.8,0) : rand(2.2,0));
+    const slot = slots[i];
+    n.target.copy(slot);
+    if(r.type==="main"){
+      const a = rand(Math.PI*2,0), d = rand(2.5,1.5);
+      n.pos.set(r.center.x + Math.cos(a)*d, r.center.y + Math.sin(a)*d*0.72, 0);
+      n.vel.set(rand(0.0014,-0.0014), rand(0.0014,-0.0014), 0);
+    }else{
+      n.pos.copy(slot).add(new THREE.Vector3(rand(0.08,-0.08), rand(0.08,-0.08), 0));
+      n.vel.set(rand(0.0007,-0.0007), rand(0.0007,-0.0007), 0);
+    }
+  });
+
+  if(r.type==="main") r.eatClock = t + 18 + rand(5,0);
+  if(r.type==="wander"){
+    r.drift.set(rand(0.00035,-0.00035), rand(0.00028,-0.00028), 0);
+    r.phase = Math.random()*10;
+  }
+  r.respawnAt = Infinity;
+}
+
+function collide(nodes){
+  for(let i=0;i<nodes.length;i++){
+    const a = nodes[i];
+    if(!a.born || a.dead) continue;
+
+    for(let j=i+1;j<nodes.length;j++){
+      const b = nodes[j];
+      if(!b.born || b.dead) continue;
+
+      // 同一個波堤內的節點，不互撞
+      if(a.ringId >= 0 && a.ringId === b.ringId) continue;
+
+      const d = new THREE.Vector3().subVectors(b.pos,a.pos);
+      let dist = d.length();
+      const min = a.r + b.r + 0.010;
+      if(dist >= min) continue;
+
+      if(dist < 0.0001){ d.set(1,0,0); dist = 0.0001; }
+      d.multiplyScalar(1/dist);
+
+      const overlap = min - dist;
+      a.pos.addScaledVector(d,-overlap*0.52);
+      b.pos.addScaledVector(d, overlap*0.52);
+
+      a.vel.addScaledVector(d,-0.0036-overlap*0.030);
+      b.vel.addScaledVector(d, 0.0036+overlap*0.030);
+
+      a.hit = Math.min(1, a.hit + 0.72);
+      b.hit = Math.min(1, b.hit + 0.72);
+    }
+  }
+}
+
+function updateNode(n,t,dt){
+  if(t < n.spawn){ n.mesh.visible = false; return; }
+  if(!n.born){ n.born = true; n.mesh.visible = true; }
+
+  const bornT = smooth(t, n.spawn, n.spawn+1.6);
+
+  n.vel.x += Math.sin(t*0.18 + n.breathe) * 0.00006;
+  n.vel.y += Math.cos(t*0.16 + n.breathe*1.2) * 0.00006;
+
+  if(n.kind==="main" || n.kind==="wander"){
+    const to = new THREE.Vector3().subVectors(n.target,n.pos);
+    n.vel.addScaledVector(to, n.kind==="main" ? 0.00034 : 0.00028); // 再慢
+  }else{
+    n.vel.x += Math.sin(t*0.08 + n.breathe) * 0.00003;
+    n.vel.y += Math.cos(t*0.07 + n.breathe) * 0.00003;
+  }
+
+  n.vel.multiplyScalar(0.995);
+  n.pos.addScaledVector(n.vel, dt*60);
+
+  const b = bounds();
+  if(n.pos.x < -b.w+n.r){ n.pos.x=-b.w+n.r; n.vel.x*=-0.55; n.hit=0.4; }
+  if(n.pos.x >  b.w-n.r){ n.pos.x= b.w-n.r; n.vel.x*=-0.55; n.hit=0.4; }
+  if(n.pos.y < -b.h+n.r){ n.pos.y=-b.h+n.r; n.vel.y*=-0.55; n.hit=0.4; }
+  if(n.pos.y >  b.h-n.r){ n.pos.y= b.h-n.r; n.vel.y*=-0.55; n.hit=0.4; }
+
+  let alpha = bornT;
+  let scaleCut = 1;
+  if(n.dying){
+    const k = clamp((t-n.dieAt)/1.4, 0, 1);
+    scaleCut = 1 - smooth(k,0,1);
+    alpha *= scaleCut;
+    if(k>=1){ n.dead = true; n.mesh.visible = false; return; }
+  }
+
+  // 碰撞後整顆球 pulse，不改壞球體
+  const pulse = 1 + Math.sin(t*17 + n.breathe)*n.hit*0.10;
+  n.hit *= 0.90;
+
+  const breath = 1 + Math.sin(t*0.72 + n.breathe)*0.018;
+  const s = n.r * breath * pulse * scaleCut;
+
+  n.mesh.position.copy(n.pos);
+  n.mesh.scale.setScalar(s);
+
+  const sh = n.mesh.material.userData.shader;
+  if(sh){
+    sh.uniforms.uAlpha.value = alpha;
+    sh.uniforms.uHit.value = n.hit;
+  }
+  n.mesh.material.opacity = alpha;
+}
+
+function updateRings(t){
+  rings.forEach(r=>{
+    if(r.type==="wander"){
+      r.center.x += r.drift.x + Math.sin(t*0.10 + r.phase)*0.00008;
+      r.center.y += r.drift.y + Math.cos(t*0.09 + r.phase)*0.00006;
+
+      const b = bounds();
+      if(r.center.x < -b.w*0.86 || r.center.x > b.w*0.86) r.drift.x *= -1;
+      if(r.center.y < -b.h*0.80 || r.center.y > b.h*0.80) r.drift.y *= -1;
+
+      const slots = ringSlots(r.center, r.radius, 8);
+      r.nodes.forEach((n,i)=>n.target.copy(slots[i]));
+    }
+
+    if(r.type==="main" && t > r.eatClock){
+      const alive = r.nodes.filter(n=>n.born && !n.dying && !n.dead);
+      if(alive.length){
+        alive.sort((a,b)=>a.pos.distanceToSquared(r.center)-b.pos.distanceToSquared(r.center));
+        alive[alive.length-1].dying = true;
+        alive[alive.length-1].dieAt = t;
+        r.eatClock = t + 1.2 + rand(1.0,0); // 也是漸進吃掉
+      }else if(r.respawnAt===Infinity){
+        r.respawnAt = t + 4 + rand(3,0);
+      }
+    }
+
+    if(r.type==="wander"){
+      const alive = r.nodes.filter(n=>!n.dead);
+      if(!alive.length && r.respawnAt===Infinity) r.respawnAt = t + 5 + rand(5,0);
+    }
+
+    if(t > r.respawnAt) reviveRing(r,t);
+  });
+
+  freeNodes.forEach(n=>{
+    if(n.dead && t > n.spawn + 18 + rand(6,0)){
+      n.dead = n.dying = n.born = false;
+      n.mesh.visible = false;
+      n.spawn = t + rand(5,0);
+      n.pos.set(rand(6,-6), rand(4,-4), 0);
+      n.target.copy(n.pos);
+      n.vel.set(rand(0.0007,-0.0007), rand(0.0007,-0.0007), 0);
+    }else if(!n.dead && !n.dying && Math.random()<0.00035){
+      n.dying = true;
+      n.dieAt = t;
+    }
+  });
+}
+
+let start=0,last=0;
+initScene();
+
+function loop(now){
+  requestAnimationFrame(loop);
+  now *= 0.001;
+  if(!start){ start=now; last=now; }
+
+  const t = now - start;
+  const dt = Math.min(now - last, 0.033);
+  last = now;
+
+  updateRings(t);
+
+  const all = [...rings.flatMap(r=>r.nodes), ...freeNodes];
+  all.forEach(n=>updateNode(n,t,dt));
+  collide(all);
+  all.forEach(n=>{ if(n.born && !n.dead) updateNode(n,t,0); });
+
+  renderer.render(scene,cam);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -2,9 +2,9 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Strawberry Q-Ring: Collision Event Matrix</title>
+    <title>Strawberry Q-Ring: Perfect 3D Spheres & Social Events</title>
     <style>
-        body { margin: 0; overflow: hidden; background: linear-gradient(135deg, #fff2f5 0%, #ffcbd5 100%); }
+        body { margin: 0; overflow: hidden; background: linear-gradient(135deg, #fff0f3 0%, #ffcbd5 100%); }
     </style>
 </head>
 <body>
@@ -15,15 +15,15 @@
         precision highp float;
         uniform float u_time;
         uniform float u_seed;
-        uniform float u_lifecycle; 
+        uniform float u_lifecycle;
         uniform vec2 u_resolution;
         varying vec2 vUv;
 
-        // 感官色票
+        // 【感官色票精準對位】 [cite: 34, 42, 44]
         vec3 colPink = vec3(1.0, 0.70, 0.78);   
-        vec3 colCream = vec3(1.0, 0.98, 0.92); 
-        vec3 colJam = vec3(0.85, 0.05, 0.25);   
-        vec3 colSSS = vec3(1.0, 0.45, 0.5);     
+        vec3 colCream = vec3(1.0, 0.98, 0.90);  // 溫潤奶油高光
+        vec3 colJam = vec3(0.85, 0.05, 0.25);   // 草莓果粒
+        vec3 colSSS = vec3(1.0, 0.45, 0.5);     // 暖粉透光
 
         float rand(vec2 n) { return fract(sin(dot(n, vec2(12.9898, 4.1414))) * 43758.5453); }
         vec2 rand2(vec2 p) { return fract(sin(vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3))))*43758.5453); }
@@ -31,76 +31,78 @@
         void main() {
             vec2 uv = (vUv - 0.5) * vec2(u_resolution.x / u_resolution.y, 1.0);
             
-            // --- 背景全域稀疏碎屑 ---
-            float ambient = step(0.9985, rand(uv + u_time * 0.001));
-            vec3 bg = mix(vec3(1.0, 0.96, 0.97), colPink * 0.95, length(uv) * 0.6);
-            bg = mix(bg, colJam, ambient * 0.4);
+            // --- 背景全域散落物 (Strawberry Debris) ---
+            float ambientBits = step(0.995, rand(uv + u_time * 0.005));
+            vec3 bg = mix(vec3(1.0, 0.95, 0.96), colPink * 0.9, length(uv) * 0.6);
+            bg = mix(bg, colJam, ambientBits * 0.3);
 
             float maxZ = -1.0;
-            vec3 finalCol = vec3(0.0);
+            vec3 finalSphereCol = vec3(0.0);
             bool hit = false;
 
-            // 鎖定 40 顆，大小與妳提供的 21:08 版本一致
+            // 模擬 40 顆具備個體 DNA 的獨立球體
             for (int i = 0; i < 40; i++) {
                 float idx = float(i);
-                float bTime = rand(vec2(idx, u_seed)) * 8.0; 
-                float life = smoothstep(bTime, bTime + 2.0, u_time) * (1.0 - smoothstep(40.0, 45.0, u_time));
+                float bTime = rand(vec2(idx, u_seed)) * 4.0;
+                float life = smoothstep(bTime, bTime + 2.0, u_time) * (1.0 - smoothstep(12.0, 15.0, u_time));
                 
-                // 基準尺寸放大 (0.05-0.08)
+                // 個體差異：大小與社會性 (30% 邊緣人)
                 float radius = (0.05 + rand(vec2(idx, 1.0)) * 0.03) * life;
+                float isLonely = step(0.7, rand(vec2(idx, 2.0)));
                 
-                float gIdx = floor(idx / 8.0);
-                vec2 gCenter = (rand2(vec2(gIdx, 4.0)) - 0.5) * 1.4;
-                float angle = mod(idx, 8.0) * (6.2831 / 8.0);
-                
-                // 運動轉譯：初始廣域漂流
-                vec2 startPos = (rand2(vec2(idx, 5.0)) - 0.5) * 2.5; 
-                vec2 targetPos = gCenter + vec2(cos(angle), sin(angle)) * 0.22;
-                
-                // 聚集進度
-                float formationT = smoothstep(bTime + 5.0, bTime + 30.0, u_time);
-                
-                // --- 條件觸發：碰撞震盪與彈開 ---
-                // 只有在 10s-30s 的聚集過程中才觸發
-                float eventT = smoothstep(0.3, 0.5, formationT) * (1.0 - smoothstep(0.8, 1.0, formationT));
-                float wobble = sin(u_time * 25.0 + idx) * 0.012 * eventT;
+                vec2 center;
+                if(isLonely > 0.5) {
+                    center = (rand2(vec2(idx, 3.0)) - 0.5) * 1.6;
+                    center += vec2(cos(u_time * 0.2 + idx), sin(u_time * 0.15 + idx)) * 0.2;
+                } else {
+                    float gIdx = floor(idx / 8.0);
+                    vec2 gCenter = (rand2(vec2(gIdx, 4.0)) - 0.5) * 1.2;
+                    gCenter += vec2(cos(u_time * 0.15 + gIdx), sin(u_time * 0.1 + gIdx)) * 0.15;
+                    float angle = mod(idx, 8.0) * (6.2831 / 8.0) + u_time * 0.05;
+                    float clusterF = smoothstep(bTime + 2.0, bTime + 8.0, u_time);
+                    center = gCenter + mix((rand2(vec2(idx, 5.0))-0.5)*1.2, vec2(cos(angle), sin(angle)) * 0.16, clusterF);
+                }
 
-                // 彈開位移：接近時產生過衝
-                float bounce = sin(formationT * 3.1415) * 0.07 * eventT;
-                vec2 center = mix(startPos, targetPos, formationT) + (normalize(startPos - targetPos) * bounce);
+                // --- 碰撞震盪邏輯 ---
+                // 模擬碰撞產生的表面波紋
+                float wobble = sin(u_time * 20.0 + idx) * 0.008 * smoothstep(0.4, 0.1, length(uv - center));
 
+                // --- 3D 幾何投影：解決平頭與融合 ---
                 vec2 distVec = uv - center;
                 float d2 = dot(distVec, distVec);
                 float r2 = radius * radius;
 
                 if (d2 < r2) {
-                    float z = sqrt(r2 - d2); 
-                    if (z > maxZ) { // 深度判定：拒絕任何黏合
-                        maxZ = z; hit = true;
+                    float z = sqrt(r2 - d2); // 真實半球面深度
+                    if (z > maxZ) { // 深度判定：解決融合問題
+                        maxZ = z;
+                        hit = true;
                         
-                        // 球體法線（條件震盪注入）
+                        // 計算完美的球面法線
                         vec3 normal = normalize(vec3(distVec, z + wobble));
+                        
+                        // 光影渲染：奶油高光與透光感
                         vec3 lightPos = normalize(vec3(0.5, 0.8, 1.0));
                         float diff = max(dot(normal, lightPos), 0.0);
-                        
-                        float spec = pow(diff, 20.0) * 0.75; 
-                        float rim = pow(1.0 - max(dot(normal, vec3(0,0,1)), 0.0), 3.5) * 0.45;
-                        float sss = pow(1.0 - diff, 1.5) * 0.2;
+                        float spec = pow(diff, 25.0) * 0.8; 
+                        float rim = pow(1.0 - max(dot(normal, vec3(0,0,1)), 0.0), 3.0) * 0.4;
+                        float sss = pow(1.0 - diff, 2.0) * 0.2;
 
-                        // 球面碎屑：去方塊、稀疏大顆
-                        float bitNoise = rand(uv * 15.0 + normal.xy * 3.0);
-                        float bits = step(0.99, bitNoise);
-                        
-                        vec3 ballCol = mix(colPink, colPink * 1.05, rand(vec2(idx)));
-                        ballCol = mix(ballCol, colJam, bits * 0.5);
+                        // 球體表面裝飾：果粒紅
+                        float bits = step(0.95, rand(uv * 10.0 + normal.xy * 5.0));
+                        vec3 ballCol = mix(colPink, colPink * 1.1, rand(vec2(idx)));
+                        ballCol = mix(ballCol, colJam, bits * 0.45);
 
-                        finalCol = ballCol * (diff + 0.35) + (colCream * spec) + (colPink * rim) + (colSSS * sss);
+                        finalSphereCol = ballCol * (diff + 0.3) + (colCream * spec) + (colPink * rim) + (colSSS * sss);
                     }
                 }
             }
 
-            if (!hit) gl_FragColor = vec4(bg, 1.0);
-            else gl_FragColor = vec4(finalCol, 1.0);
+            if (!hit) {
+                gl_FragColor = vec4(bg, 1.0);
+            } else {
+                gl_FragColor = vec4(finalSphereCol, 1.0);
+            }
         }
     </script>
 
@@ -116,8 +118,8 @@
             clock = new THREE.Clock();
             uniforms = {
                 u_time: { value: 0.0 },
-                u_seed: { value: Math.random() * 888.0 },
-                u_lifecycle: { value: 45.0 },
+                u_seed: { value: Math.random() * 999.0 },
+                u_lifecycle: { value: 15.0 },
                 u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
             };
             const material = new THREE.ShaderMaterial({
