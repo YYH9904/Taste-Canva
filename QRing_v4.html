@@ -344,7 +344,7 @@ function spawnWanderRing(x,y,count=8){
 
     // 不要同時開始形成
     n.spawn = rand(3.0, 0.0);
-    n.formDelay = 2.2 + rand(2.0, 0.0); // 新增
+    n.formDelay = 0.9 + rand(0.9, 0.0);
     return n;
   });
 
@@ -383,15 +383,12 @@ function initScene(){
   clearAll();
   addCrumbs(220);
 
-  spawnMainRing(-2.4,  0.9, 0);
-  spawnMainRing( 2.2, -0.6, 5.0);
+  spawnMainRing(-2.0,  0.6, 0);
 
-  spawnWanderRing(-5.4,  2.5, 8);
-  spawnWanderRing( 5.4,  2.3, 8);
-  spawnWanderRing( 0.0,  3.4, 8);
-  spawnWanderRing( 0.0, -3.4, 8);
+  spawnWanderRing(-4.8,  2.2, 8);
+  spawnWanderRing( 4.8, -2.0, 8);
 
-  for(let i=0;i<5;i++) spawnFree(rand(6,-6), rand(4,-4));
+  for(let i=0;i<9;i++) spawnFree(rand(6,-6), rand(4,-4));
 }
 
 function reviveRing(r, t){
@@ -399,7 +396,7 @@ function reviveRing(r, t){
   const p = findOpenCenter(isArc ? 3.1 : (r.type === "main" ? 3.1 : 2.9), 100, 6.0, 3.9);
 
   r.center.copy(p);
-  r.radius = isArc ? 0.94 + Math.random()*0.10 : (r.type === "main" ? 1.08 : 0.78+Math.random()*0.12);
+  r.radius = isArc ? 0.94 + Math.random()*0.10 : (r.type === "main" ? 1.08 : 0.88 + Math.random()*0.06);
   r.activeSlots = isArc ? arcPick(r.nodes.length) : [...Array(8).keys()];
 
   const slots = ringSlots(r.center, r.radius, 8);
@@ -425,8 +422,15 @@ function reviveRing(r, t){
       n.pos.set(r.center.x + Math.cos(a)*d, r.center.y + Math.sin(a)*d*0.72, 0);
       n.vel.set(rand(0.0014,-0.0014), rand(0.0014,-0.0014), 0);
     }else{
-      n.pos.copy(slot).add(new THREE.Vector3(rand(0.06,-0.06), rand(0.06,-0.06), 0));
-      n.vel.set(rand(0.0007,-0.0007), rand(0.0007,-0.0007), 0);
+      const a = rand(Math.PI * 2, 0);
+      const d = rand(2.2, 1.0);
+      n.pos.set(
+        r.center.x + Math.cos(a) * d,
+        r.center.y + Math.sin(a) * d * 0.8,
+        0
+      );
+      n.vel.set(rand(0.00035,-0.00035), rand(0.00035,-0.00035), 0);
+      n.formDelay = 0.9 + rand(0.9, 0.0);
     }
   });
 
@@ -447,36 +451,68 @@ function collide(nodes){
       const b = nodes[j];
       if(!b.born || b.dead) continue;
 
-      if(a.ringId >= 0 && a.ringId === b.ringId) continue;
-      if(a.kind==="free" && b.kind==="free") continue;
+      const sameRing = (a.ringId >= 0 && a.ringId === b.ringId);
+      const bothFree = (a.kind === "free" && b.kind === "free");
 
-      const d = new THREE.Vector3().subVectors(b.pos,a.pos);
+      const d = new THREE.Vector3().subVectors(b.pos, a.pos);
       let dist = d.length();
-      const min = a.r + b.r + 0.06;
-      if(dist >= min) continue;
 
       if(dist < 0.0001){
         d.set(1,0,0);
         dist = 0.0001;
       }
-      d.multiplyScalar(1/dist);
+      d.multiplyScalar(1 / dist);
+
+      let min;
+      let pushA;
+      let pushB;
+      let impulse;
+
+      // 1) 同 ring：只做很輕微的局部擠壓回彈
+      // 讓它們能彼此「碰到有感」，但不會把整個波堤打散
+      if(sameRing){
+        min = a.r + b.r - 0.045;   // 幾乎貼住
+        pushA = 0.22;
+        pushB = 0.22;
+        impulse = 0.0007;
+      }
+      // 2) free-free：也要有碰撞，不然單顆會直接互穿或黏住
+      else if(bothFree){
+        min = a.r + b.r + 0.10;
+        pushA = 0.55;
+        pushB = 0.55;
+        impulse = 0.0015;
+      }
+      // 3) 其他情況：維持你原本跨群體的較明顯彈開
+      else{
+        min = a.r + b.r + 0.06;
+        pushA = 0.78;
+        pushB = 0.78;
+        impulse = 0.0022;
+      }
+
+      if(dist >= min) continue;
 
       const overlap = min - dist;
-      a.pos.addScaledVector(d,-overlap*0.78);
-      b.pos.addScaledVector(d, overlap*0.78);
 
-      // 位移彈開小一點
-      a.vel.addScaledVector(d,-0.0022-overlap*0.020);
-      b.vel.addScaledVector(d, 0.0022+overlap*0.020);
+      a.pos.addScaledVector(d, -overlap * pushA);
+      b.pos.addScaledVector(d,  overlap * pushB);
 
-      // 局部晃動能量
-      a.hit = Math.min(1, a.hit + 0.95);
-      b.hit = Math.min(1, b.hit + 0.95);
+      a.vel.addScaledVector(d, -impulse - overlap * 0.010);
+      b.vel.addScaledVector(d,  impulse + overlap * 0.010);
 
-      a.wobX += rand(0.06,-0.06);
-      a.wobY += rand(0.06,-0.06);
-      b.wobX += rand(0.06,-0.06);
-      b.wobY += rand(0.06,-0.06);
+      // hit 也分級，不要同 ring 撞一下就抖太大
+      const hitGain = sameRing ? 0.28 : 0.75;
+
+      a.hit = Math.min(1, a.hit + hitGain);
+      b.hit = Math.min(1, b.hit + hitGain);
+
+      const wobbleGain = sameRing ? 0.022 : 0.05;
+
+      a.wobX += rand(wobbleGain, -wobbleGain);
+      a.wobY += rand(wobbleGain, -wobbleGain);
+      b.wobX += rand(wobbleGain, -wobbleGain);
+      b.wobY += rand(wobbleGain, -wobbleGain);
     }
   }
 }
@@ -509,14 +545,14 @@ function updateNode(n,t,dt){
       }else{
         // wander 先漂，再逐步被招募成波堤
         const formT = smooth(t, n.spawn + n.formDelay, n.spawn + n.formDelay + 3.2);
-        n.vel.addScaledVector(to, 0.000055 * formT);
+        n.vel.addScaledVector(to, 0.000095 * formT);
       }
     }else{
         n.vel.x += Math.sin(t*0.08 + n.breathe) * 0.000015 * moveT;
         n.vel.y += Math.cos(t*0.07 + n.breathe) * 0.000015 * moveT;
     }
 
-    n.vel.multiplyScalar(0.992);
+    n.vel.multiplyScalar(0.985);
     n.pos.addScaledVector(n.vel, dt*60);
 
     const b = bounds();
@@ -578,13 +614,22 @@ function updateRings(t){
   rings.forEach(r=>{
     if(r.type!=="main")
     {
+      /*
       r.center.x += r.drift.x + Math.sin(t*0.10 + r.phase)*0.00008;
       r.center.y += r.drift.y + Math.cos(t*0.09 + r.phase)*0.00006;
 
       const b = bounds();
       if(r.center.x < -b.w*0.86 || r.center.x > b.w*0.86) r.drift.x *= -1;
       if(r.center.y < -b.h*0.80 || r.center.y > b.h*0.80) r.drift.y *= -1;
-
+      */
+      if(r.type!=="main")
+      {
+        const slots = ringSlots(r.center, r.radius, 8);
+        r.nodes.forEach((n,i)=>{
+          const slotIndex = r.activeSlots ? r.activeSlots[i] : i;
+          n.target.copy(slots[slotIndex]);
+        });
+      }
       const slots = ringSlots(r.center, r.radius, 8);
       r.nodes.forEach((n,i)=>{
         const slotIndex = r.activeSlots ? r.activeSlots[i] : i;
@@ -626,10 +671,10 @@ function updateRings(t){
       n.pos.copy(p);
       n.target.copy(n.pos);
       n.vel.set(rand(0.0007,-0.0007), rand(0.0007,-0.0007), 0);
-    }else if(!n.dead && !n.dying && Math.random()<0.00035){
+    }/*else if(!n.dead && !n.dying && Math.random()<0.00035){
       n.dying = true;
       n.dieAt = t;
-    }
+    }*/
   });
 }
 
