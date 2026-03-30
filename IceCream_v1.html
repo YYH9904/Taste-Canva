@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <title>IceCream Structure v3 Melt Field</title>
+  <style>
+    html, body {
+      margin: 0;
+      overflow: hidden;
+      background: #e7d7c7;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <script id="vertexShader" type="x-shader/x-vertex">
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  </script>
+
+  <script id="fragmentShader" type="x-shader/x-fragment">
+    precision highp float;
+
+    uniform float u_time;
+    uniform vec2 u_resolution;
+    varying vec2 vUv;
+
+    float hash(vec2 p){
+      return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453123);
+    }
+
+    float noise(vec2 p){
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      float a = hash(i);
+      float b = hash(i + vec2(1.0, 0.0));
+      float c = hash(i + vec2(0.0, 1.0));
+      float d = hash(i + vec2(1.0, 1.0));
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(a, b, u.x) +
+             (c - a) * u.y * (1.0 - u.x) +
+             (d - b) * u.x * u.y;
+    }
+
+    float fbm(vec2 p){
+      float v = 0.0;
+      float a = 0.5;
+      for(int i = 0; i < 5; i++){
+        v += a * noise(p);
+        p *= 2.0;
+        a *= 0.5;
+      }
+      return v;
+    }
+
+    float getLifeT(){
+      float loop = 24.0;
+      return mod(u_time, loop) / loop;
+    }
+
+    vec2 flow(vec2 p, float meltT){
+      float t = u_time * 0.035;
+      vec2 q = p;
+
+      q.x += sin(q.y * 0.8 + t) * 0.10;
+      q.x += sin(q.y * 1.6 + 1.5 - t * 0.65) * 0.05;
+      q.x += sin(q.y * 2.9 + 0.8 + t * 0.35) * 0.02;
+      q.y += sin(q.x * 0.9 + t * 0.45) * 0.018;
+
+      vec2 drift = vec2(
+        fbm(q * 0.55 + vec2(0.0, t * 0.7)),
+        fbm(q * 0.55 + vec2(3.8, t * 0.55))
+      ) - 0.5;
+
+      q += drift * 0.05;
+
+      // 整片開始融：略往下、略攤開
+      q.y += meltT * 0.095;
+      q.x *= 1.0 + meltT * 0.045;
+
+      // 後段整體更平、更滑
+      q = mix(q, q * 0.94, meltT * 0.35);
+
+      return q;
+    }
+
+    float foldsRaw(vec2 q){
+      float bend = sin(q.y * 0.9) * 0.18 + sin(q.y * 2.1) * 0.05;
+      float x = q.x + bend;
+
+      float f1 = sin(x * 6.0 + q.y * 0.55);
+      float f2 = sin(x * 9.5 - q.y * 0.30 + 1.1);
+      float f3 = sin(x * 13.0 + q.y * 0.18 + 2.3);
+      float f4 = sin(x * 4.2 - q.y * 0.12 + 0.6);
+
+      float v = f1 * 0.34 + f2 * 0.28 + f3 * 0.22 + f4 * 0.16;
+      v = v * 0.5 + 0.5;
+
+      v = smoothstep(0.22, 0.80, v);
+      v += (fbm(q * 1.1) - 0.5) * 0.06;
+
+      return clamp(v, 0.0, 1.0);
+    }
+
+    float ribbonsRaw(vec2 q){
+      vec2 r = q;
+
+      r.x += sin(r.y * 0.7 + 0.5) * 0.20;
+      r.x += sin(r.y * 1.6 + 1.8) * 0.08;
+      r.x += sin(r.y * 3.1 + 0.9) * 0.03;
+
+      float s1 = sin(r.x * 10.0 + r.y * 0.45);
+      float s2 = sin(r.x * 13.5 - r.y * 0.30 + 1.2);
+      float s3 = sin(r.x * 18.0 + r.y * 0.22 + 2.4);
+      float s4 = sin(r.x * 7.5  - r.y * 0.18 + 0.6);
+
+      float bands = s1 * 0.34 + s2 * 0.28 + s3 * 0.22 + s4 * 0.16;
+      bands = bands * 0.5 + 0.5;
+
+      float ribbonMask = smoothstep(0.58, 0.82, bands);
+
+      float densityA = 0.75 + 0.25 * sin(r.y * 2.8 + r.x * 1.1);
+      float densityB = 0.82 + 0.18 * sin(r.y * 6.5 + 0.8);
+      ribbonMask *= densityA * densityB;
+
+      float breakup = sin(r.x * 5.0 + r.y * 4.0 + sin(r.y * 2.2) * 0.8) * 0.5 + 0.5;
+      ribbonMask *= mix(0.75, 1.0, breakup);
+
+      return clamp(ribbonMask, 0.0, 1.0);
+    }
+
+    float folds(vec2 q, float meltT){
+      float f = foldsRaw(q);
+
+      // 越後面越失去奶峰支撐
+      f = mix(f, smoothstep(0.10, 0.94, f), 1.0 - meltT * 0.40);
+      f = mix(f, f * 0.72 + 0.16, meltT * 0.62);
+
+      return clamp(f, 0.0, 1.0);
+    }
+
+    float ribbons(vec2 q, float meltT){
+      float r = ribbonsRaw(q);
+
+      // 巧克力絲帶整片變寬、變糊、被抹散
+      float expandedA = smoothstep(0.36, 0.76, r);
+      float expandedB = smoothstep(0.22, 0.64, r);
+
+      r = mix(r, expandedA, meltT * 0.38);
+      r = mix(r, expandedB, meltT * 0.22);
+
+      return clamp(r, 0.0, 1.0);
+    }
+
+    float heightField(vec2 p, float meltT){
+      vec2 q = flow(p, meltT);
+      float f = folds(q, meltT);
+      float r = ribbons(q, meltT);
+      float micro = (fbm(q * 2.2) - 0.5) * mix(0.035, 0.018, meltT);
+
+      return f * mix(0.86, 0.60, meltT) + r * 0.10 + micro;
+    }
+
+    void main(){
+      vec2 uv = vUv;
+      vec2 p = uv - 0.5;
+      p.x *= u_resolution.x / u_resolution.y;
+      p *= 1.15;
+
+      float lifeT = getLifeT();
+      float meltT = smoothstep(0.42, 0.98, lifeT);
+
+      vec2 q = flow(p, meltT);
+      float f = folds(q, meltT);
+      float r = ribbons(q, meltT);
+      float h = heightField(p, meltT);
+
+      float eps = 0.0045;
+      float hx1 = heightField(p + vec2(eps, 0.0), meltT);
+      float hx2 = heightField(p - vec2(eps, 0.0), meltT);
+      float hy1 = heightField(p + vec2(0.0, eps), meltT);
+      float hy2 = heightField(p - vec2(0.0, eps), meltT);
+
+      vec3 n = normalize(vec3((hx2 - hx1) / eps, (hy2 - hy1) / eps, mix(2.25, 1.65, meltT)));
+
+      vec3 lightDir = normalize(vec3(0.24, 0.30, 0.92));
+      vec3 viewDir  = vec3(0.0, 0.0, 1.0);
+      vec3 halfDir  = normalize(lightDir + viewDir);
+
+      float diff = max(dot(n, lightDir), 0.0);
+      float specWide  = pow(max(dot(n, halfDir), 0.0), mix(8.0, 4.5, meltT));
+      float specTight = pow(max(dot(n, halfDir), 0.0), mix(22.0, 10.0, meltT));
+
+      // palette：更像巧克力霜淇淋
+      vec3 bg         = vec3(0.90, 0.82, 0.74);
+      vec3 creamLight = vec3(0.84, 0.73, 0.62);
+      vec3 creamMid   = vec3(0.70, 0.57, 0.46);
+      vec3 creamDark  = vec3(0.56, 0.43, 0.33);
+
+      vec3 chocoA     = vec3(0.30, 0.18, 0.11);
+      vec3 chocoB     = vec3(0.17, 0.09, 0.05);
+
+      vec3 shineWide  = vec3(0.98, 0.93, 0.86);
+      vec3 shineTight = vec3(1.00, 0.96, 0.90);
+
+      vec3 col = mix(creamDark, creamLight, f);
+      col = mix(col, creamMid, smoothstep(0.18, 0.92, h) * 0.28);
+
+      vec3 choco = mix(chocoA, chocoB, smoothstep(0.18, 0.90, f));
+      col = mix(col, choco, r * mix(0.72, 0.58, meltT));
+
+      // 融化後整體更濕、更接近巧克力奶霜膏體
+      col = mix(col, mix(creamMid, creamLight, 0.35), meltT * 0.08);
+
+      col *= 0.86 + 0.14 * f;
+      col *= 0.88 + 0.12 * diff;
+
+      col += shineWide * specWide * mix(0.06, 0.15, meltT);
+      col += shineTight * specTight * mix(0.018, 0.05, meltT);
+
+      // very light glossy wash
+      float wet = fbm(q * 0.75 + vec2(0.0, u_time * 0.02));
+      col += shineWide * smoothstep(0.62, 0.92, wet) * meltT * 0.03;
+
+      col = mix(bg, col, 0.98);
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  </script>
+
+  <script>
+    let scene, camera, renderer, uniforms, material, clock;
+
+    function init() {
+      scene = new THREE.Scene();
+      camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+      camera.position.z = 1;
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      uniforms = {
+        u_time: { value: 0.0 },
+        u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+      };
+
+      material = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: document.getElementById('vertexShader').textContent,
+        fragmentShader: document.getElementById('fragmentShader').textContent
+      });
+
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+      scene.add(mesh);
+
+      clock = new THREE.Clock();
+      window.addEventListener('resize', onResize, false);
+      animate();
+    }
+
+    function onResize() {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      uniforms.u_time.value = clock.getElapsedTime();
+      renderer.render(scene, camera);
+    }
+
+    init();
+  </script>
+</body>
+</html>

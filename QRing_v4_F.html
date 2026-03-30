@@ -317,7 +317,7 @@ function spawnWanderRing(x,y,count=8){
   center.x += x * 0.04;
   center.y += y * 0.04;
 
-  const radius = count >= 8 ? 0.88 + Math.random()*0.06 : 0.94 + Math.random()*0.06;
+  const radius = count >= 8 ? 1.00 + Math.random()*0.05 : 1.02 + Math.random()*0.05;
   const allSlots = ringSlots(center, radius, 8);
   const pick = count >= 8 ? [...Array(8).keys()] : arcPick(count);
 
@@ -332,7 +332,7 @@ function spawnWanderRing(x,y,count=8){
 
     // 不要一出生就在 target 附近
     const a = rand(Math.PI * 2, 0);
-    const d = rand(2.2, 1.0); // 出生散在周圍
+    const d = rand(3.4, 2.2); // 出生散在周圍
     n.pos.set(
       center.x + Math.cos(a) * d,
       center.y + Math.sin(a) * d * 0.8,
@@ -344,7 +344,7 @@ function spawnWanderRing(x,y,count=8){
 
     // 不要同時開始形成
     n.spawn = rand(3.0, 0.0);
-    n.formDelay = 0.9 + rand(0.9, 0.0);
+    n.formDelay = 1.1 + rand(0.8, 0.0);
     return n;
   });
 
@@ -396,7 +396,7 @@ function reviveRing(r, t){
   const p = findOpenCenter(isArc ? 3.1 : (r.type === "main" ? 3.1 : 2.9), 100, 6.0, 3.9);
 
   r.center.copy(p);
-  r.radius = isArc ? 0.94 + Math.random()*0.10 : (r.type === "main" ? 1.08 : 0.88 + Math.random()*0.06);
+  r.radius = isArc ? 1.02 + Math.random()*0.05 : (r.type === "main" ? 1.08 : 1.00 + Math.random()*0.05);
   r.activeSlots = isArc ? arcPick(r.nodes.length) : [...Array(8).keys()];
 
   const slots = ringSlots(r.center, r.radius, 8);
@@ -470,11 +470,19 @@ function collide(nodes){
 
       // 1) 同 ring：只做很輕微的局部擠壓回彈
       // 讓它們能彼此「碰到有感」，但不會把整個波堤打散
+      /*
       if(sameRing){
         min = a.r + b.r - 0.045;   // 幾乎貼住
         pushA = 0.22;
         pushB = 0.22;
         impulse = 0.0007;
+      }
+      */
+      if(sameRing){
+        min = a.r + b.r + 0.02;
+        pushA = 0.18;
+        pushB = 0.18;
+        impulse = 0.00045;
       }
       // 2) free-free：也要有碰撞，不然單顆會直接互穿或黏住
       else if(bothFree){
@@ -541,9 +549,9 @@ function updateNode(n,t,dt){
       const to = new THREE.Vector3().subVectors(n.target,n.pos);
 
       if(n.kind === "main"){
-          n.vel.addScaledVector(to, 0.00007 * moveT);
+        const formT = smooth(t, n.spawn + n.formDelay, n.spawn + n.formDelay + 2.8);
+        n.vel.addScaledVector(to, 0.00010 * formT);
       }else{
-        // wander 先漂，再逐步被招募成波堤
         const formT = smooth(t, n.spawn + n.formDelay, n.spawn + n.formDelay + 3.2);
         n.vel.addScaledVector(to, 0.000095 * formT);
       }
